@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head><!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solana Real-Time Arbi</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; color: #fff; font-family: -apple-system, sans-serif; padding: 12px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .logo { font-size: 18px; font-weight: bold; }
+    .status { font-size: 12px; color: #0f0; }
+    .search { width: 100%; padding: 12px; background: #111; border: 1px solid #333; border-radius: 8px; color: #fff; margin-bottom: 12px; font-size: 16px; }
+    .tokens { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 16px; }
+    .token-btn { padding: 8px 16px; background: #1a1a1a; border: 1px solid #333; border-radius: 20px; white-space: nowrap; }
+    .token-btn.active { background: #6d28d9; border-color: #6d28d9; }
+    .dex-grid { display: grid; gap: 8px; }
+    .dex-card { background: #0a0a0a; border: 1px solid #222; border-radius: 12px; padding: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .dex-name { font-weight: 600; }
+    .dex-price { font-family: monospace; font-size: 18px; }
+    .dex-price.up { color: #0f0; }
+    .dex-price.down { color: #f00; }
+    .spread { font-size: 12px; color: #888; }
+    .live-dot { display: inline-block; width: 8px; height: 8px; background: #0f0; border-radius: 50%; margin-right: 6px; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">⚡ SOL ARBI</div>
+    <div class="status"><span class="live-dot"></span><span id="status">Connecting...</span></div>
+  </div>
+  
+  <input class="search" id="search" placeholder="Search any token (SOL, BONK, or mint address)">
+  
+  <div class="tokens">
+    <div class="token-btn active" data-token="SOL">SOL</div>
+    <div class="token-btn" data-token="BONK">BONK</div>
+    <div class="token-btn" data-token="WIF">WIF</div>
+    <div class="token-btn" data-token="JUP">JUP</div>
+    <div class="token-btn" data-token="RAY">RAY</div>
+    <div class="token-btn" data-token="ORCA">ORCA</div>
+  </div>
+  
+  <div class="dex-grid" id="grid"></div>
+
+  <script>
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host);
+    const grid = document.getElementById('grid');
+    const status = document.getElementById('status');
+    let currentToken = 'SOL';
+    const prices = {};
+
+    ws.onopen = () => status.textContent = 'LIVE';
+    ws.onclose = () => status.textContent = 'Disconnected';
+    
+    ws.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data.type === 'price' && data.token === currentToken) {
+        updateDex(data.dex, data.price);
+      }
+    };
+
+    function updateDex(dex, price) {
+      const oldPrice = prices[dex];
+      prices[dex] = price;
+      
+      let card = document.getElementById('dex-' + dex);
+      if (!card) {
+        card = document.createElement('div');
+        card.className = 'dex-card';
+        card.id = 'dex-' + dex;
+        card.innerHTML = `<div><div class="dex-name">${dex.toUpperCase()}</div><div class="spread" id="spread-${dex}">-</div></div><div class="dex-price" id="price-${dex}">-</div>`;
+        grid.appendChild(card);
+      }
+      
+      const priceEl = document.getElementById('price-' + dex);
+      priceEl.textContent = '$' + price.toFixed(4);
+      priceEl.className = 'dex-price ' + (oldPrice ? (price > oldPrice ? 'up' : 'down') : '');
+      
+      // Calculate spread vs best
+      const allPrices = Object.values(prices);
+      if (allPrices.length > 1) {
+        const best = Math.max(...allPrices);
+        const spread = ((best - price) / price * 100).toFixed(2);
+        document.getElementById('spread-' + dex).textContent = spread > 0 ? `+${spread}% arb` : 'best';
+      }
+      
+      setTimeout(() => priceEl.className = 'dex-price', 300);
+    }
+
+    document.querySelectorAll('.token-btn').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.token-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentToken = btn.dataset.token;
+        grid.innerHTML = '';
+        Object.keys(prices).forEach(k => delete prices[k]);
+        ws.send(JSON.stringify({ type: 'search', token: currentToken }));
+      };
+    });
+
+    document.getElementById('search').onkeypress = (e) => {
+      if (e.key === 'Enter') {
+        currentToken = e.target.value.toUpperCase();
+        grid.innerHTML = '';
+        ws.send(JSON.stringify({ type: 'search', token: currentToken }));
+      }
+    };
+  </script>
+</body>
+  </html>
+  
